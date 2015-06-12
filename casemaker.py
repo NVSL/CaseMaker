@@ -8,18 +8,7 @@ import numpy as np
 from Rectangle import Rectangle
 from lxml import etree as ET
 import math
-
-def rect2scad(rect, height, z_start = 0, mirrored = False):
-    """
-    Convert a Rectangle into an openscad cube
-    """
-    scad_cube = translate([rect.left(), rect.bot(), z_start])(
-        cube([rect.width, rect.height, height])
-    )
-    if mirrored:
-        return scale([1,1,-1])(scad_cube)
-    else:
-        return scad_cube
+import scad
 
 
 def make_cutout_rect(container, rect, thickness):
@@ -58,7 +47,7 @@ def vertical_cuts(container_rect, cuts, space_top, thickness, mirrored = False):
 
 parser = argparse.ArgumentParser(description="Make 3D printed cases for your gadgets")
 parser.add_argument("brdfile", help="Board file to make a case from")
-parser.add_argument("-f","--file", help="SCAD output file")
+parser.add_argument("-f","--file", help="SCAD output file", default="out.scad")
 parser.add_argument("-g","--gspec",help="gspec file containing height information")
 parser.add_argument("-o","--open", action="store_true", help="The top of the case is open")
 args = parser.parse_args()
@@ -68,29 +57,19 @@ board = SwoopGeom.from_file(args.brdfile)
 #Find the bounding box of the board
 board_box = board.get_bounding_box()
 
-SPACE_TOP = 15.0    #space between board and top/bottom of case
-SPACE_BOT = 15.0
-CASE_THICKNESS = 6   #thickness of plastic around case
-
+top = 15.0
+bottom = 15.0
 
 if args.gspec is not None:
     gspec = ET.parse(args.gspec)
     for option in gspec.findall("option"):
         if option.get("name")=="front-standoff-height":
-            SPACE_TOP = float(option.attr["value"])
+            scad.space_top = float(option.attr["value"])
         elif option.get("name")=="back-standoff-height":
-            SPACE_BOT = float(option.attr["value"])
+            scad.space_bot = float(option.attr["value"])
 
+case = scad.ScadCase(board_box, top, bottom)
 
-
-#The shell, which will be hollowed out
-inner = translate([board_box.left(), board_box.bot(), -SPACE_BOT])(
-            cube([board_box.width, board_box.height, SPACE_BOT + SPACE_TOP])
-)
-
-outer_shell = minkowski()(inner, cube(CASE_THICKNESS*2, center=True))
-
-case = outer_shell - inner
 
 tfaceplate_filter = lambda p: hasattr(p,"layer") and p.get_layer()=="tFaceplate"
 bfaceplate_filter = lambda p: hasattr(p,"layer") and p.get_layer()=="bFaceplate"
@@ -101,10 +80,8 @@ for elem in board.get_elements():
     if elem.get_mirrored():
         for child in elem.get_package_moved().get_children():
             if tfaceplate_filter(child):
-                print "bface {0} {1}".format(elem.get_name(), child)
                 child.set_layer("bFaceplate")
             elif bfaceplate_filter(child):
-                print "tface {0} {1}".format(elem.get_name(), child)
                 child.set_layer("tFaceplate")
 
 
@@ -124,12 +101,11 @@ bfaceplate = board.\
     filtered_by(bfaceplate_filter).\
     get_bounding_box()
 bfaceplate += board.get_plain_elements().filtered_by(bfaceplate_filter).get_bounding_box()
-print bfaceplate.eagle_code()
 
-for cut in vertical_cuts(board_box, tfaceplate, SPACE_TOP, CASE_THICKNESS):
-    case  -= cut
-for cut in vertical_cuts(board_box, bfaceplate, SPACE_BOT, CASE_THICKNESS, mirrored=True):
-    case -= cut
+for rect in tfaceplate:
+    case.cut_top(rect)
+for rect in bfaceplate:
+    case.cut_bot(rect)
 
 
 side_cuts = board.get_plain_elements().\
@@ -137,8 +113,5 @@ side_cuts = board.get_plain_elements().\
     get_bounding_box()
 
 
-if args.file:
-    scad_render_to_file(case, args.file)
-else:
-    print scad_render(case)
+case.save(args.file)
 
