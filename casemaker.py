@@ -48,7 +48,7 @@ if args.gspec is not None:
         elif option.get("name")=="back-standoff-height":
             bottom = float(option.attrib["value"])
 
-case = scad.ScadCase(board_box, top, bottom)
+case = scad.ScadCase(board_box, space_top=top, space_bot=bottom)
 
 
 tfaceplate_filter = lambda p: hasattr(p,"layer") and p.get_layer()=="tFaceplate"
