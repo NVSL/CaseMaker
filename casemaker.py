@@ -11,26 +11,6 @@ import math
 import scad
 
 
-def make_cutout_rect(container, rect, thickness):
-    """
-    If rect intersects container, return a rectangle to cut out the container on the side
-    """
-    if container.encloses(rect):
-        return None
-
-    cut = rect
-    for axis in xrange(2):
-        if rect.low(axis) < container.low(axis):    #left/bottom cut
-            move = np.array([0,0])
-            move[axis] = -thickness*2
-            cut = Rectangle.union(cut, rect.copy().move(move))
-            # print cut
-        if rect.high(axis) > container.high(axis):  #right/top cut
-            move = np.array([0,0])
-            move[axis] = thickness*2
-            cut = Rectangle.union(cut, rect.copy().move(move))
-            # print cut
-    return cut
 
 def vertical_cuts(container_rect, cuts, space_top, thickness, mirrored = False):
     assert thickness > 0
@@ -49,7 +29,7 @@ parser = argparse.ArgumentParser(description="Make 3D printed cases for your gad
 parser.add_argument("brdfile", help="Board file to make a case from")
 parser.add_argument("-f","--file", help="SCAD output file", default="out.scad")
 parser.add_argument("-g","--gspec",help="gspec file containing height information")
-parser.add_argument("-o","--open", action="store_true", help="The top of the case is open")
+parser.add_argument("--open", action="store_true", help="The top of the case is open")
 args = parser.parse_args()
 
 board = SwoopGeom.from_file(args.brdfile)
@@ -64,9 +44,9 @@ if args.gspec is not None:
     gspec = ET.parse(args.gspec)
     for option in gspec.findall("option"):
         if option.get("name")=="front-standoff-height":
-            scad.space_top = float(option.attr["value"])
+            top = float(option.attrib["value"])
         elif option.get("name")=="back-standoff-height":
-            scad.space_bot = float(option.attr["value"])
+            bottom = float(option.attrib["value"])
 
 case = scad.ScadCase(board_box, top, bottom)
 
@@ -109,8 +89,10 @@ for rect in bfaceplate:
 
 
 side_cuts = board.get_plain_elements().\
-    filtered_by(lambda p: hasattr(p,"layer") and p.layer=="sideCut").\
+    filtered_by(lambda p: hasattr(p,"layer") and p.layer=="tSideCut").\
     get_bounding_box()
+for cut in side_cuts:
+    case.cut_side_top(cut)
 
 
 case.save(args.file)
