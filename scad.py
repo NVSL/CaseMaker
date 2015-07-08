@@ -29,7 +29,7 @@ class ScadCase(object):
                  space_bot=15.0,
                  board_thickness=1.6,
                  thickness_z = 4.0,
-                 thickness_sides = 6.7):
+                 thickness_sides = 7.1):
         self._space_top = space_top
         self._space_bot = space_bot
         self._thickness_xy = thickness_sides    # thickness of each side
@@ -37,6 +37,12 @@ class ScadCase(object):
         self._board_slot = 3.5  #Width of the slot that holds the board
         self._board_thickness = board_thickness
         self._board_bbox = board_bbox.copy().pad(-self._board_slot)
+
+        #Material must at least this thick around a screw
+        self._min_screw_material = 1.0
+
+        #number of segments for round things
+        self._round_segments = 40
 
         # From the side:
         # _ top of case
@@ -54,9 +60,12 @@ class ScadCase(object):
         inner = rect2scad(self._board_bbox, height=self.cavity_height, z_start = -self._space_bot)
 
         padded = self._board_bbox.copy().pad(self._thickness_xy)
+        total_height = self.cavity_height + self._thickness_z*2
         outer = rect2scad(padded,
-                          height=self.cavity_height + self._thickness_z*2,
+                          height=total_height,
                           z_start=-(self._space_bot + self._thickness_z))
+        print "Case dimensions: "
+        print "{0}mm W, {1}mm L, {2}mm H".format(padded.width, padded.height, total_height)
 
         self._case = outer - inner
         slot = self._board_bbox.copy().pad(self._board_slot)
@@ -112,12 +121,12 @@ class ScadCase(object):
         # Add screws
         screw_head_radius = 3.0
         screw_head_length = 2.5
-        screw_shaft_radius = 1.30
+        screw_shaft_radius = 1.40       # 2.8mm diameter = 0.3mm extra
         screw_shaft_length = 15.0
         head = sc.translate([0,0,screw_shaft_length])(
-                    sc.cylinder(h=screw_head_length + 100, r=screw_head_radius, segments=20)
+                    sc.cylinder(h=screw_head_length + 100, r=screw_head_radius, segments=self._round_segments)
                 )
-        shaft = sc.cylinder(h=screw_shaft_length + 0.1, r=screw_shaft_radius, segments=20)
+        shaft = sc.cylinder(h=screw_shaft_length + 0.1, r=screw_shaft_radius, segments=self._round_segments)
         screw_down = sc.translate([0,0,-screw_shaft_length - screw_head_length])(
                         sc.union()(head,shaft)
                     )
@@ -132,7 +141,7 @@ class ScadCase(object):
         side_thick = self._thickness_xy - self._board_slot
         ymin = self._board_bbox.bot() - self._board_slot - side_thick/2.0
         ymax = self._board_bbox.top() + self._board_slot + side_thick/2.0
-        zmin = -self.cavity_bot - self._thickness_z + screw_head_radius
+        zmin = -self.cavity_bot - self._thickness_z + screw_head_radius + self._min_screw_material
         zmax = self.cavity_top - self._thickness_z - screw_head_radius
         x = self._board_bbox.right() + self._thickness_xy + 1.0
 
@@ -140,6 +149,8 @@ class ScadCase(object):
         for y in [ymin, ymax]:
             for z in [zmin, zmax]:
                 self._case -= sc.translate([x,y,z])(screw_side)
+        print "Free material around side screws: {0}mm".\
+            format(self._thickness_xy - self._board_slot - 2*screw_shaft_radius)
 
         # Add screws to the top
         screw_recess_top = 0
@@ -158,14 +169,10 @@ class ScadCase(object):
             for x in xs:
                 self._case -= sc.translate([x,y,z])(screw_down)
 
-
-        #Add screws to hold down the board
-        # x = self._board_bbox.left() + (self._board_bbox.width + self._board_slot*2)/2.0
-
+        #Top area: top of the case
         top_area_select = self._board_bbox.copy().pad(self._thickness_xy*2)
         top_area_select = rect2scad(top_area_select, self._thickness_z + 0.1, self.cavity_top - 0.05)
 
-        # Separate the sides to be screwed on
         # main_area is the case without the top or side
         main_area = self._board_bbox.copy()
         main_area.bounds[0][0] -= self._thickness_xy*2
@@ -173,8 +180,23 @@ class ScadCase(object):
         main_area.bounds[1][0] -= 0.05    #So we don't have a degenerate face
         main_area.bounds[1][1] += self._thickness_xy*2
         main_area = rect2scad(main_area, self.height * 2, z_start = -self.height - 10)
+
+        #Add screws to hold down the board
+        remove_top = self._board_bbox.copy().pad(self._thickness_xy*2)
+        remove_top = rect2scad(remove_top, self.height, self.cavity_top + 0.05)
+        x = self._board_bbox.left() + (self._board_bbox.width + self._board_slot*2)/2.0
+        ys = [self._board_bbox.bot() - screw_shaft_radius - 0.5,
+              self._board_bbox.top() + screw_shaft_radius + 0.5]
+        z = screw_head_length
+        for y in ys:
+            self._case -= (sc.translate([x,y,z])(screw_down) - remove_top)
+            print "Board screw location: ({0}, {1})".format(x,y)
+
+
+        # Separate out the sides of the case
         main_part = self._case * main_area
         side = self._case - (main_area + top_area_select)      # Side of the case, first part to screw on
+
 
         #The top of the case (screwed on after the side)
         top = self._case * top_area_select
